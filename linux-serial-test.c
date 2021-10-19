@@ -616,6 +616,18 @@ static int diff_ms(const struct timespec *t1, const struct timespec *t2)
 	return (diff.tv_sec * 1000 + diff.tv_nsec/1000000);
 }
 
+static long long int compute_error_count()
+{
+	long long int result;
+	if (_cl_no_rx == 1 || _cl_no_tx == 1) {
+		result = _error_count;
+	} else {
+		result = llabs(_write_count - _read_count) + _error_count;
+	}
+
+	return (result > 125) ? 125 : (int)result;
+}
+
 int main(int argc, char * argv[])
 {
 	printf("Linux serial test app\n");
@@ -807,7 +819,5 @@ int main(int argc, char * argv[])
 	free(_cl_port);
 	free(_write_data);
 
-	long long int result = llabs(_write_count - _read_count) + _error_count;
-
-	return (result > 125) ? 125 : (int)result;
+	return compute_error_count();
 }
