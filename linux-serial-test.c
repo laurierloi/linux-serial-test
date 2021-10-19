@@ -98,9 +98,12 @@ static void set_baud_divisor(int speed, int custom_divisor)
 {
 	// default baud was not found, so try to set a custom divisor
 	struct serial_struct ss;
-	if (ioctl(_fd, TIOCGSERIAL, &ss) < 0) {
+	int ret;
+
+	ret = ioctl(_fd, TIOCGSERIAL, &ss);
+	if (ret < 0) {
 		perror("TIOCGSERIAL failed");
-		exit(1);
+		exit(ret);
 	}
 
 	ss.flags = (ss.flags & ~ASYNC_SPD_MASK) | ASYNC_SPD_CUST;
@@ -112,22 +115,25 @@ static void set_baud_divisor(int speed, int custom_divisor)
 
 		if (closest_speed < speed * 98 / 100 || closest_speed > speed * 102 / 100) {
 			fprintf(stderr, "Cannot set speed to %d, closest is %d\n", speed, closest_speed);
-			exit(1);
+			exit(-EINVAL);
 		}
 
 		printf("closest baud = %i, base = %i, divisor = %i\n", closest_speed, ss.baud_base,
 				ss.custom_divisor);
 	}
 
-	if (ioctl(_fd, TIOCSSERIAL, &ss) < 0) {
+	ret = ioctl(_fd, TIOCSSERIAL, &ss);
+	if (ret < 0) {
 		perror("TIOCSSERIAL failed");
-		exit(1);
+		exit(ret);
 	}
 }
 
 static void clear_custom_speed_flag()
 {
 	struct serial_struct ss;
+	int ret;
+
 	if (ioctl(_fd, TIOCGSERIAL, &ss) < 0) {
 		// return silently as some devices do not support TIOCGSERIAL
 		return;
@@ -138,9 +144,10 @@ static void clear_custom_speed_flag()
 
 	ss.flags &= ~ASYNC_SPD_MASK;
 
-	if (ioctl(_fd, TIOCSSERIAL, &ss) < 0) {
+	ret = ioctl(_fd, TIOCSSERIAL, &ss);
+	if (ret < 0) {
 		perror("TIOCSSERIAL failed");
-		exit(1);
+		exit(ret);
 	}
 }
 
@@ -212,7 +219,7 @@ void set_modem_lines(int fd, int bits, int mask)
 	ret = ioctl(fd, TIOCMGET, &status);
 	if (ret < 0) {
 		perror("TIOCMGET failed");
-		exit(1);
+		exit(ret);
 	}
 
 	status = (status & ~mask) | (bits & mask);
@@ -220,7 +227,7 @@ void set_modem_lines(int fd, int bits, int mask)
 	ret = ioctl(fd, TIOCMSET, &status);
 	if (ret < 0) {
 		perror("TIOCMSET failed");
-		exit(1);
+		exit(ret);
 	}
 }
 
@@ -417,7 +424,9 @@ static void dump_serial_port_stats(void)
 	printf("%s: count for this session: rx=%lld, tx=%lld, rx err=%lld\n", _cl_port, _read_count, _write_count, _error_count);
 
 	int ret = ioctl(_fd, TIOCGICOUNT, &icount);
-	if (ret != -1) {
+	if (ret < 0) {
+		perror("Error getting TIOCGICOUNT");
+	} else {
 		printf("%s: TIOCGICOUNT: ret=%i, rx=%i, tx=%i, frame = %i, overrun = %i, parity = %i, brk = %i, buf_overrun = %i\n",
 				_cl_port, ret, icount.rx, icount.tx, icount.frame, icount.overrun, icount.parity, icount.brk,
 				icount.buf_overrun);
@@ -455,7 +464,7 @@ static void process_read_data(void)
 				_error_count++;
 				if (_cl_stop_on_error) {
 					dump_serial_port_stats();
-					exit(1);
+					exit(-EIO);
 				}
 				_read_count_value = rb[i];
 			}
@@ -525,7 +534,7 @@ static void setup_serial_port(int baud)
 	if (_fd < 0) {
 		perror("Error opening serial port");
 		free(_cl_port);
-		exit(1);
+		exit(_fd);
 	}
 
 	bzero(&newtio, sizeof(newtio)); /* clear struct for new port settings */
@@ -616,7 +625,7 @@ int main(int argc, char * argv[])
 	if (!_cl_port) {
 		fprintf(stderr, "ERROR: Port argument required\n");
 		display_help();
-		return 1;
+		exit(-EINVAL);
 	}
 
 	int baud = B115200;
@@ -652,10 +661,10 @@ int main(int argc, char * argv[])
 		written = write(_fd, &data, bytes);
 		if (written < 0) {
 			perror("write()");
-			return 1;
+			exit(written);
 		} else if (written != bytes) {
 			fprintf(stderr, "ERROR: write() returned %d, not %d\n", written, bytes);
-			return 1;
+			exit(-EIO);
 		}
 		return 0;
 	}
@@ -665,7 +674,7 @@ int main(int argc, char * argv[])
 	_write_data = malloc(_write_size);
 	if (_write_data == NULL) {
 		fprintf(stderr, "ERROR: Memory allocation failed\n");
-		return 1;
+		exit(-ENOMEM);
 	}
 
 	if (_cl_ascii_range) {
