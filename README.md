@@ -2,6 +2,9 @@
 
 # Linux Serial Test Application
 
+For bounded I/O, RS-485 configuration changes, validation, and integrity limits
+in this fork, see [HARDENING.md](HARDENING.md).
+
 # Compiling
 
 This is a very simple program -- there are several ways to compile it on Linux:

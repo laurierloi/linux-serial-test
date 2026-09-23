@@ -5,3 +5,6 @@ cmake_install.cmake
 linux-serial-test
 build
 
+
+build/
+__pycache__/

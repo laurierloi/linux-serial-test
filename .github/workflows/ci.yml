@@ -1,0 +1,22 @@
+name: serial-regression
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Strict build and static analysis
+        run: gcc -std=gnu11 -O2 -Wall -Wextra -Werror -fanalyzer linux-serial-test.c -o linux-serial-test
+      - name: PTY and mocked driver regressions
+        run: python3 -m unittest discover -s tests -v
+      - name: Undefined behavior checks
+        run: |
+          gcc -std=gnu11 -O1 -g -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all linux-serial-test.c -o linux-serial-test
+          python3 -m unittest discover -s tests -v
+      - name: Static host and ARM builds
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
+          tests/build.sh
