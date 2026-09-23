@@ -1,5 +1,9 @@
 #!/bin/sh
 set -eu
+if [ -n "$(git status --porcelain)" ]; then
+    echo "Build requires a clean committed source tree" >&2
+    exit 1
+fi
 revision=$(git rev-parse HEAD)
 mkdir -p build
 for architecture in host target; do

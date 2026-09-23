@@ -13,7 +13,7 @@ class DriverTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
     def test_driver_contracts(self):
-        for case in ['short-write','credit','drain','read-error','preserve','reconfigure','reject','readback']:
+        for case in ['short-write','credit','drain','read-error','preserve','reconfigure','restore-fail','reject','readback']:
             with self.subTest(case=case):
                 result = subprocess.run([self.binary,case],capture_output=True,timeout=2)
                 self.assertEqual(result.returncode, 2 if case in ('reject','readback') else 0, result.stderr.decode())

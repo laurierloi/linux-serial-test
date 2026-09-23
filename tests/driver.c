@@ -76,7 +76,9 @@ int main(int argc, char **argv)
     assert(config.delay_rts_after_send == 2 && config.delay_rts_before_send == 3);
     assert(config.flags & SER_RS485_RTS_AFTER_SEND);
     assert(!(config.flags & (SER_RS485_RTS_ON_SEND | SER_RS485_RX_DURING_TX)));
+    if (!strcmp(argv[1], "restore-fail")) reject_set=1;
     exit_handler();
+    if (reject_set) { assert(_failed); return 0; }
     assert(config.delay_rts_after_send == 99);
     return 0;
 }

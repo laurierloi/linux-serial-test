@@ -89,6 +89,12 @@ struct serial_icounter_struct _initial_icount;
 int _initial_icount_valid = 0;
 int _rx_requested = 0;
 int _cl_turnaround_delay = 0;
+int _transaction_role = 0, _transaction_timeout = 3000, _startup_timeout = 0;
+unsigned _transactions = 16, _payload_bytes = 64, _run_id = 0;
+int _strict_drain = 0, _physical_empty = 0;
+char *_ready_file = NULL;
+int _ready_owned = 0;
+
 int _saved_serial_valid = 0, _serial_changed = 0;
 struct serial_struct _saved_serial;
 int _saved_modem_valid = 0, _saved_modem_status = 0;
@@ -122,21 +128,25 @@ static void exit_handler(void)
                 int status;
                 if (ioctl(_fd, TIOCMGET, &status) == 0) {
                     status = (status & ~TIOCM_LOOP) | (_saved_modem_status & TIOCM_LOOP);
-                    if (ioctl(_fd, TIOCMSET, &status) < 0) perror("restoring modem lines");
-                }
+                    if (ioctl(_fd, TIOCMSET, &status) < 0) { perror("restoring modem lines"); _failed = 1; }
+                } else { perror("reading modem state for restoration"); _failed = 1; }
             }
             if (_saved_serial_valid && _serial_changed && ioctl(_fd, TIOCSSERIAL, &_saved_serial) < 0)
-                perror("restoring serial configuration");
+                { perror("restoring serial configuration"); _failed = 1; }
             if (_saved_rs485_valid && ioctl(_fd, TIOCSRS485, &_saved_rs485) < 0)
-                perror("restoring RS485 configuration");
+                { perror("restoring RS485 configuration"); _failed = 1; }
             if (_saved_termios_valid && tcsetattr(_fd, TCSANOW, &_saved_termios) < 0)
-                perror("restoring terminal configuration");
+                { perror("restoring terminal configuration"); _failed = 1; }
             flock(_fd, LOCK_UN);
         }
-        close(_fd);
+        if (close(_fd) < 0) { perror("close"); _failed = 1; }
+        _fd = -1;
     }
-    free(_cl_port);
-    free(_write_data);
+    if (_ready_owned && unlink(_ready_file) < 0) { perror("removing ready file"); _failed = 1; }
+    _ready_owned = 0;
+    free(_ready_file); _ready_file = NULL;
+    free(_cl_port); _cl_port = NULL;
+    free(_write_data); _write_data = NULL;
 }
 
 static long long number(const char *text, long long min, long long max)
@@ -369,7 +379,15 @@ static void display_help(void)
 			"  -W, --tx-wait            Number of seconds to wait before to transmit (defaults to 0, meaning no wait)\n"
 			"  -Z, --error-on-timeout   Treat timeouts as errors\n"
 			"  -n, --no-icount          Do not request driver for counts of input serial line interrupts (TIOCGICOUNT)\n"
-			"      --version            Show source revision\n"
+			"      --transaction-role ROLE  initiator or responder (framed exchange)\n"
+            "      --run-id N           Shared nonzero 32-bit session identifier\n"
+            "      --transactions N     Exact request/reply count (default 16)\n"
+            "      --payload-bytes N    Payload length 1..4096 (default 64)\n"
+            "      --startup-timeout MS  Handshake deadline (defaults to exchange deadline)\n"
+            "      --transaction-timeout MS  Per-exchange deadline (default 3000)\n"
+            "      --strict-drain       Require physical transmitter-empty feedback\n"
+            "      --ready-file PATH    Exclusive marker after setup; removed at exit\n"
+            "      --version            Show source revision\n"
             "      --expected-rx N      Require exactly N received bytes (detects whole-pattern loss)\n"
             "      --turnaround-delay MS  Guard interval after receiving before replying\n"
             "      --drain-timeout MS   Bound output drain (default 10000 milliseconds)\n"
@@ -421,7 +439,15 @@ static void process_options(int argc, char * argv[])
 			{"error-on-timeout", no_argument, 0, 'Z'},
 			{"no-icount", no_argument, 0, 'n'},
 			{"flush-buffers", no_argument, 0, 'f'},
-			{"version", no_argument, 0, 1003},
+			{"startup-timeout", required_argument, 0, 1017},
+            {"transaction-role", required_argument, 0, 1010},
+            {"run-id", required_argument, 0, 1011},
+            {"transactions", required_argument, 0, 1012},
+            {"payload-bytes", required_argument, 0, 1013},
+            {"transaction-timeout", required_argument, 0, 1014},
+            {"strict-drain", no_argument, 0, 1015},
+            {"ready-file", required_argument, 0, 1016},
+            {"version", no_argument, 0, 1003},
             {"turnaround-delay", required_argument, 0, 1002},
             {"expected-rx", required_argument, 0, 1000},
             {"drain-timeout", required_argument, 0, 1001},
@@ -567,6 +593,20 @@ static void process_options(int argc, char * argv[])
 		case 'n':
 			_cl_no_icount = 1;
 			break;
+        case 1017: _startup_timeout=number(optarg,1,INT_MAX); break;
+        case 1010:
+            if (!strcmp(optarg,"initiator")) _transaction_role=1;
+            else if (!strcmp(optarg,"responder")) _transaction_role=2;
+            else { fprintf(stderr,"Invalid transaction role\n"); exit(2); }
+            break;
+        case 1011: _run_id=number(optarg,1,UINT_MAX); break;
+        case 1012: _transactions=number(optarg,1,100000); break;
+        case 1013: _payload_bytes=number(optarg,1,4096); break;
+        case 1014: _transaction_timeout=number(optarg,1,INT_MAX); break;
+        case 1015: _strict_drain=1; break;
+        case 1016:
+            free(_ready_file); _ready_file=strdup(optarg);
+            if (!_ready_file) { perror("strdup"); exit(2); } break;
         case 1003:
             printf("linux-serial-test %s\n", SERIAL_TEST_VERSION); exit(0);
         case 1002:
@@ -583,6 +623,9 @@ static void process_options(int argc, char * argv[])
 			break;
 		}
 	}
+    if (_transaction_role && (!_run_id || _cl_no_rx || _cl_no_tx || _cl_write_after_read || _cl_single_byte >= 0 || _cl_loopback || _cl_tx_time || _cl_rx_time || _cl_expected_rx >= 0 || _cl_tx_wait || _cl_tx_delay || _cl_rx_delay || _cl_ascii_range)) {
+        fprintf(stderr,"Transactions require a run ID and cannot mix with stream/directional/timing options\n"); exit(2);
+    }
     if (optind != argc) { fprintf(stderr, "Unexpected positional argument\n"); exit(2); }
 }
 
@@ -790,10 +833,14 @@ static void drain_output(void)
             /* Physical UARTs can expose the shift-register state. USB drivers
              * may not; accepted/drained bytes are not peer delivery proof. */
             if (ioctl(_fd, TIOCSERGETLSR, &state) < 0) {
-                if (errno == ENOTTY || errno == EINVAL || errno == EOPNOTSUPP) return;
+                if (errno == ENOTTY || errno == EINVAL || errno == EOPNOTSUPP) {
+                    _physical_empty = 0;
+                    if (_strict_drain) { fprintf(stderr,"Physical TX-empty feedback unsupported\n"); _failed=1; }
+                    return;
+                }
                 perror("TIOCSERGETLSR"); _failed = 1; return;
             }
-            if (state & TIOCSER_TEMT) return;
+            if (state & TIOCSER_TEMT) { _physical_empty=1; return; }
         }
         if (monotonic_ms() >= deadline) {
             fprintf(stderr, "Output drain deadline exceeded\n"); _failed = 1; return;
@@ -812,6 +859,8 @@ static int compute_error_count(void)
         result += llabs(_write_count - _read_count);
     return result > 125 ? 125 : (int)result;
 }
+
+#include "transactions.h"
 
 int main(int argc, char * argv[])
 {
@@ -872,6 +921,7 @@ int main(int argc, char * argv[])
 			exit(-EIO);
 		}
 		drain_output();
+        exit_handler();
         return _failed || sigint_received ? 125 : 0;
 	}
 
@@ -890,7 +940,26 @@ int main(int argc, char * argv[])
     if (_cl_flush_buffers && tcflush(_fd, TCIOFLUSH) < 0) { perror("tcflush"); return 2; }
     if (!_cl_no_icount)
         _initial_icount_valid = ioctl(_fd, TIOCGICOUNT, &_initial_icount) == 0;
+    if (_strict_drain) {
+        int status;
+        if (ioctl(_fd, TIOCSERGETLSR, &status)<0) { perror("Physical TX-empty feedback required"); return 2; }
+    }
+    if (_ready_file) {
+        int ready=open(_ready_file,O_CREAT|O_EXCL|O_WRONLY|O_CLOEXEC|O_NOFOLLOW,0600);
+        if(ready<0) { perror("ready file"); return 2; }
+        _ready_owned=1;
+        if(close(ready)<0) { perror("ready file close"); return 2; }
+    }
     printf("Ready: %s\n", _cl_port);
+    if (_transaction_role) {
+        run_transactions();
+        dump_serial_port_stats();
+        if (_failed && !strcmp(transaction_error,"none")) transaction_error="driver";
+        exit_handler();
+        if (_failed && !strcmp(transaction_error,"none")) transaction_error="cleanup";
+        transaction_report();
+        return _failed || sigint_received ? 125 : 0;
+    }
     long long start = monotonic_ms(), last_read = start, last_write = start;
     long long last_stat = start, last_timeout = start;
     long long tx_start = start + (long long)_cl_tx_wait * 1000;
@@ -942,5 +1011,7 @@ int main(int argc, char * argv[])
     printf("Terminating ...\n");
     if (!_failed && _write_count) drain_output();
     dump_serial_port_stats();
-    return compute_error_count();
+    int result=compute_error_count();
+    exit_handler();
+    return _failed ? 125 : result;
 }
