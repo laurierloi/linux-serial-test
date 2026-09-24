@@ -116,3 +116,26 @@ flush, and removes its own marker on normal/graceful exit. It never replaces an
 existing file. SIGKILL cannot clean it; use a fresh per-run path and remove stale
 markers only when their owning test is known to have ended. Framed mode cannot be
 combined with stream duration/direction, write-follow, loopback or byte-count flags.
+
+## Versioned CI releases
+
+`VERSION` holds the semantic version. Builds report `v<VERSION>+<source SHA>`.
+Push the matching `v<VERSION>` tag to publish after all regression checks pass.
+A suffix such as `-rc.1` produces a prerelease, never the latest stable release.
+CI builds static x86-64 and ARM hard-float executables inside the recorded Docker
+image and runs the PTY suite on both (ARM through QEMU). Mock driver tests run
+natively. CI does not qualify electrical behavior on hardware.
+
+Release assets are `linux-serial-test-linux-x86_64`,
+`linux-serial-test-linux-armhf`, `manifest.json`, and `SHA256SUMS`. The manifest
+records the exact commit, compiler versions, build image ID, flags and hashes.
+The repository must have immutable releases enabled; publication fails otherwise.
+GitHub creates release attestations when the draft is published. Consumers can
+verify with `gh release verify <tag>` and `gh release verify-asset <tag> <file>`.
+Pin a release and its binary SHA-256 values in consuming projects, never `latest`.
+To roll back, restore the previous lockfile and reinstall its pinned binaries.
+
+Change VERSION in a reviewed commit, then tag that commit. Published versions
+and their assets are not overwritten. A failed draft publication can be inspected
+and completed after fixing the failure; the workflow intentionally does not
+replace existing assets on a rerun.

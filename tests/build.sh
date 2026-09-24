@@ -5,6 +5,8 @@ if [ -n "$(git status --porcelain)" ]; then
     exit 1
 fi
 revision=$(git rev-parse HEAD)
+version=$(cat VERSION)
+python3 -c 'from tests.package_release import version; import sys; version(sys.argv[1], "")' "$version"
 mkdir -p build
 for architecture in host target; do
     case "$architecture" in
@@ -12,5 +14,5 @@ for architecture in host target; do
         target) compiler=arm-linux-gnueabihf-gcc ;;
     esac
     "$compiler" -std=gnu11 -O2 -Wall -Wextra -Werror -static -Wl,--build-id=sha1 \
-        "-DSERIAL_TEST_VERSION=\"$revision\"" linux-serial-test.c -o "build/linux-serial-test-$architecture"
+        "-DSERIAL_TEST_VERSION=\"v$version+$revision\"" linux-serial-test.c -o "build/linux-serial-test-$architecture"
 done
