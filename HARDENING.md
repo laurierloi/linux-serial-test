@@ -129,7 +129,7 @@ natively. CI does not qualify electrical behavior on hardware.
 Release assets are `linux-serial-test-linux-x86_64`,
 `linux-serial-test-linux-armhf`, `manifest.json`, and `SHA256SUMS`. The manifest
 records the exact commit, compiler versions, build image ID, flags and hashes.
-The repository must have immutable releases enabled; publication fails otherwise.
+The repository must have immutable releases enabled; the publish job verifies immutability on the published release.
 GitHub creates release attestations when the draft is published. Consumers can
 verify with `gh release verify <tag>` and `gh release verify-asset <tag> <file>`.
 Pin a release and its binary SHA-256 values in consuming projects, never `latest`.

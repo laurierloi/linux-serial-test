@@ -65,7 +65,6 @@ jobs:
           sha256sum -c SHA256SUMS
           test "$(jq -r .version manifest.json)" = "$RELEASE_TAG"
           test "$(jq -r .revision manifest.json)" = "$GITHUB_SHA"
-          test "$(gh api "repos/$GH_REPO/immutable-releases" --jq .enabled)" = true
           # Create a draft first: all assets must be present before immutability.
           gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG" --notes "Static x86-64 and ARM hard-float builds. Source: $GITHUB_SHA. See manifest.json and SHA256SUMS for provenance. Hardware qualification is separate from CI regression checks."
           gh release upload "$RELEASE_TAG" linux-serial-test-linux-x86_64 linux-serial-test-linux-armhf manifest.json SHA256SUMS
@@ -73,3 +72,4 @@ jobs:
             *-*) gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false ;;
             *) gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest ;;
           esac
+          test "$(gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" --jq .immutable)" = true
